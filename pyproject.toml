@@ -1,0 +1,56 @@
+[project]
+name = "gas-bridger"
+version = "0.1.0"
+description = "Gas bridging contracts using LayerZero V2"
+requires-python = ">=3.12"
+
+dependencies = [
+    "vyper==0.4.0",
+    "web3>=0.7.8",
+    "snekmate==0.1.0"
+]
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "isort>=6.0.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "contracts/*.vy",
+    "scripts/*.py",
+    "README.md"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["contracts", "scripts"]
+
+[tool.black]
+exclude = '''
+(
+  /(
+    \.eggs         # exclude a few common directories in the
+    | \.git          # root of the project
+    | \.hg
+    | \.mypy_cache
+    | \.tox
+    | \.venv
+    | _build
+    | build
+    | dist
+    | contracts
+  )/
+)
+'''
+line-length = 120
+target_version = ['py312']
+
+[tool.isort]
+profile = "black"
+py_version = 312
+line_length = 120
