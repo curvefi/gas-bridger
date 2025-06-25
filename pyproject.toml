@@ -14,6 +14,7 @@ dependencies = [
 dev = [
     "black>=25.1.0",
     "isort>=6.0.1",
+    "titanoboa",
 ]
 
 [build-system]
@@ -22,13 +23,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build]
 include = [
-    "contracts/*.vy",
-    "scripts/*.py",
+    "gas_bridger/*.py",
     "README.md"
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["contracts", "scripts"]
+packages = ["gas_bridger"]
 
 [tool.black]
 exclude = '''
@@ -54,3 +54,6 @@ target_version = ['py312']
 profile = "black"
 py_version = 312
 line_length = 120
+
+[tool.uv.sources]
+titanoboa = { git = "https://github.com/vyperlang/titanoboa.git", rev = "b6baf252603c70531e26208c06172b8c82d36033" }

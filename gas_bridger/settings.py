@@ -6,8 +6,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
-    DEBUG: bool = True
-    DEV: bool = True
+    DEBUG: bool = False
+    DEV: bool = False
+
+    WEB3_PK: str
+    WEB3_PROVIDER_URL: str
 
 
 settings = Settings()
