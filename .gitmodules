@@ -1,0 +1,3 @@
+[submodule "contracts/modules/oapp"]
+	path = contracts/modules/oapp
+	url = git@github.com:curvefi/LayerZero-v2-vyper.git

@@ -15,6 +15,7 @@ deployer = Account.from_key(settings.WEB3_PK)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s -  %(levelname)s - %(message)s")
 
 yaml_file_path = Path(BASE_DIR, "deploy", "deployments.yaml")
+json_config_path = Path(BASE_DIR, "gas_bridger", "deployments.json")
 
 lz_endpoints = {
     421614: "0x6EDCE65403992e310A62460808c4b910D972f10f",

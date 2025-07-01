@@ -5,9 +5,9 @@ description = "Gas bridging contracts using LayerZero V2"
 requires-python = ">=3.12"
 
 dependencies = [
-    "vyper==0.4.0",
+    "vyper==0.4.3",
     "web3>=0.7.8",
-    "snekmate==0.1.0"
+    "snekmate==0.1.2",
 ]
 
 [dependency-groups]

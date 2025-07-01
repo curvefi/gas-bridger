@@ -1,9 +1,9 @@
-# pragma version ~=0.4
+# pragma version 0.4.3
 
 """
 @title Layer Zero Gas Sender
 
-@notice Base contract for sending gas between chainsthrough LayerZero
+@notice Base contract for sending gas between chains through LayerZero
 
 @license Copyright (c) Curve.Fi, 2025 - all rights reserved
 
@@ -13,285 +13,158 @@
 """
 
 
-# Import LayerZero module for cross-chain messaging
-import LayerZeroV2 as lz
-initializes: lz
-exports: (
-    lz.LZ_ENDPOINT,
-    lz.LZ_PEERS,
-    lz.LZ_DELEGATE,
-    lz.LZ_MESSAGE_SIZE_CAP,
-    lz.LZ_READ_CALLDATA_SIZE,
-    lz.LZ_READ_CHANNEL,
-    lz.default_gas_limit,
-    lz.nextNonce,
-    lz.allowInitializePath,
-)
+################################################################
+#                            MODULES                           #
+################################################################
 
 # Import ownership management
 from snekmate.auth import ownable
-from snekmate.auth import ownable_2step
 
 initializes: ownable
-initializes: ownable_2step[ownable := ownable]
 exports: (
-    ownable_2step.owner,
-    ownable_2step.pending_owner,
-    ownable_2step.transfer_ownership,
-    ownable_2step.accept_ownership,
-    ownable_2step.renounce_ownership,
+    ownable.owner,
+    ownable.transfer_ownership,
+    ownable.renounce_ownership,
 )
 
 
-# Events
+# Import LayerZero module for cross-chain messaging
+from .modules.oapp.src import OApp  # main module
+from .modules.oapp.src import OptionsBuilder  # module for creating options
+
+initializes: OApp[ownable := ownable]
+
+exports: (
+    OApp.peers,
+    OApp.setPeer,
+)
+
+
+################################################################
+#                           CONSTANTS                          #
+################################################################
+
+MAX_N_BROADCAST: constant(uint256) = 32
+
+################################################################
+#                            STORAGE                           #
+################################################################
+
+# Struct for broadcast info
+struct BroadcastTarget:
+    eid: uint32
+    fee: uint256
+    gas_limit: uint128
+
+
+################################################################
+#                            EVENTS                            #
+################################################################
+
 event MessageSent:
-    dstChainId: uint32
     sender: address
     receiver: address
-    amount: uint256
-
+    amount: uint128
+    target: BroadcastTarget
 
 event MessageReceived:
     source: uint32
     receiver: address
-    amount: uint256
+    amount: uint128
 
+
+################################################################
+#                          CONSTRUCTOR                         #
+################################################################
 
 @deploy
-def __init__(_endpoint: address, _gas_limit: uint256):
-    """
-    @notice Initialize messenger with LZ endpoint and default gas settings
-    @param _endpoint LayerZero endpoint address
-    @param _gas_limit Default gas limit for cross-chain messages
-    """
-    lz.__init__()
-    lz._initialize(_endpoint, _gas_limit, 4294967295, [], [])
-    lz._set_delegate(msg.sender)
-    ownable.__init__()
-    ownable_2step.__init__()
-
-
-# Owner Functions
-@external
-def set_peer(_srcEid: uint32, _peer: address):
-    """
-    @notice Set trusted peer contract on another chain
-    @param _srcEid Target endpoint ID
-    @param _peer Contract address on target chain
-    """
-
-    ownable._check_owner()
-    lz._set_peer(_srcEid, _peer)
-
-
-@external
-def set_default_gas(_gas_limit: uint256):
-    """
-    @notice Update default gas limit for messages
-    @param _gas_limit New gas limit
-    """
-
-    ownable._check_owner()
-    lz._set_default_gas_limit(_gas_limit)
-
-
-@external
-def set_lz_read_channel(_new_channel: uint32):
-    """
-    @notice Set new read channel for read requests
-    @param _new_channel New read channel ID
-    """
-
-    ownable._check_owner()
-    lz._set_lz_read_channel(_new_channel)
-
-
-@external
-def set_lz_send_lib(_oapp: address, _channel: uint32, _lib: address):
-    """
-    @notice Set new send library for send requests
-    @param _oapp Originating application address
-    @param _channel Send channel ID
-    @param _lib New send library address
-    """
-
-    ownable._check_owner()
-    lz._set_send_lib(_oapp, _channel, _lib)
-
-
-@external
-def set_lz_receive_lib(_oapp: address, _channel: uint32, _lib: address):
-    """
-    @notice Set new receive library for receive requests
-    @param _oapp Originating application address
-    @param _channel Receive channel ID
-    @param _lib New receive library address
-    """
-
-    ownable._check_owner()
-    lz._set_receive_lib(_oapp, _channel, _lib)
-
-
-@external
-def set_lz_delegate(_delegate: address):
-    """
-    @notice Set new delegate for LayerZero operations
-    @param _delegate New delegate address
-    """
-
-    ownable._check_owner()
-    lz._set_delegate(_delegate)
-
-
-@external
-def set_lz_uln_config(
-    _eid: uint32,
-    _oapp: address,
-    _lib: address,
-    _config_type: uint32,
-    _confirmations: uint64,
-    _required_dvns: DynArray[address, 10],
-    _optional_dvns: DynArray[address, 10],
-    _optional_dvn_threshold: uint8,
+def __init__(
+    _endpoint: address,
 ):
     """
-    @notice Set new ULN configuration for cross-chain messages
-    @param _eid Endpoint ID
-    @param _oapp Originating application address
-    @param _lib Library address
-    @param _config_type Configuration type
-    @param _confirmations Number of confirmations required
-    @param _required_dvns List of required DVN addresses
-    @param _optional_dvns List of optional DVN addresses
-    @param _optional_dvn_threshold Optional DVN threshold
+    @notice Initialize contract with core settings
+    @dev Can only be called once, assumes caller is owner, sets as delegate
+    @param _endpoint LayerZero endpoint address
+    @param _lz_receive_gas_limit Gas limit for lzReceive
     """
+    ownable.__init__()
+    ownable._transfer_ownership(tx.origin)  # origin to enable createx deployment
 
+    OApp.__init__(_endpoint, tx.origin)  # origin also set as delegate
+
+
+################################################################
+#                      OWNER FUNCTIONS                         #
+################################################################
+
+@external
+def set_peers(_eids: DynArray[uint32, MAX_N_BROADCAST], _peers: DynArray[address, MAX_N_BROADCAST]):
+    """
+    @notice Set peers for a corresponding endpoints. Batched version of OApp.setPeer that accept address (EVM only).
+    @param _eids The endpoint IDs.
+    @param _peers Addresses of the peers to be associated with the corresponding endpoints.
+    """
     ownable._check_owner()
-    lz._set_uln_config(
-        _eid,
-        _oapp,
-        _lib,
-        _config_type,
-        _confirmations,
-        _required_dvns,
-        _optional_dvns,
-        _optional_dvn_threshold,
-    )
 
+    assert len(_eids) == len(_peers), "Invalid peer arrays"
+    for i: uint256 in range(0, len(_eids), bound=MAX_N_BROADCAST):
+        OApp._setPeer(_eids[i], convert(_peers[i], bytes32))
 
 @external
 def withdraw_eth(_amount: uint256):
     """
     @notice Withdraw ETH from contract
+    @dev ETH can be accumulated from LZ refunds
     @param _amount Amount to withdraw
     """
-
     ownable._check_owner()
+
     assert self.balance >= _amount, "Insufficient balance"
     send(msg.sender, _amount)
 
 
-# Messaging
-@view
-@external
-def quote_message_fee(
-    _dst_eid: uint32,
-    _receiver: address,
-    _message: String[128],
-    _gas_limit: uint256 = 0,
-    _value: uint256 = 0,
-) -> uint256:
-    """
-    @notice Quote fee for sending message
-    """
+################################################################
+#                     INTERNAL FUNCTIONS                       #
+################################################################
 
-    encoded: Bytes[lz.LZ_MESSAGE_SIZE_CAP] = convert(_message, Bytes[lz.LZ_MESSAGE_SIZE_CAP])
-    return lz._quote_lz_fee(_dst_eid, _receiver, encoded, _gas_limit, _value)
-
-
-@payable
-@external
-def send_message(
-    _dst_eid: uint32,
-    _receiver: address,
-    _gas_limit: uint256 = 0,
-    _value: uint256 = 0,
-    _check_fee: bool = False,
+@internal
+def _send_gas(
+    _target: address,
+    _value: uint128,
+    _broadcast_target: BroadcastTarget,
+    _refund_address: address,
 ):
     """
-    @notice Send a string message to contract on another chain
-    @param _dst_eid Destination chain ID
-    @param _receiver Target contract address
-    @param _gas_limit Optional gas limit override
-    @param _value Optional value to send with message
+    @notice Internal function to send gas to target eid
+    @param _target Target address to receive funds
+    @param _value Amount
+    @param _broadcast_target Data for broadcasting
+    @param _refund_address Excess fees receiver
     """
+    message: Bytes[OApp.MAX_MESSAGE_SIZE] = abi_encode(_target)
 
-    _message: Bytes[lz.LZ_MESSAGE_SIZE_CAP] = abi_encode(_receiver, _value)
+    # Сreate options using OptionsBuilder module (same options for all targets)
+    options: Bytes[OptionsBuilder.MAX_OPTIONS_TOTAL_SIZE] = OptionsBuilder.newOptions()
+    options = OptionsBuilder.addExecutorLzReceiveOption(options, _broadcast_target.gas_limit, _value)
 
-    lz._send_message(
-        _dst_eid,  # _dstEid
-        convert(_receiver, bytes32),  # _receiver
-        _message,  # _message
-        _gas_limit,  # _gas_limit: Use default gas limit
-        _value,  # _lz_receive_value: No value to attach to receive call
-        0,  # _data_size: Zero data size (not a read)
-        msg.value,  # _request_msg_value
-        msg.sender,  # _refund_address
-        False,  # _perform_fee_check: No fee check
+    if OApp.peers[_broadcast_target.eid] == empty(bytes32):
+        return
+
+    # Send message
+    fees: OApp.MessagingFee = OApp.MessagingFee(nativeFee=_broadcast_target.fee, lzTokenFee=0)
+    OApp._lzSend(_broadcast_target.eid, message, options, fees, _refund_address)
+
+    log MessageSent(
+        sender=msg.sender,
+        receiver=_target,
+        amount=_value,
+        target=_broadcast_target,
     )
 
-    log MessageSent(_dst_eid, msg.sender, _receiver, _value)
 
-@view
-@external
-def quote_read_fee(
-    _dst_eid: uint32,
-    _target: address,
-    _calldata: Bytes[128],
-    _gas_limit: uint256 = 0,
-    _value: uint256 = 0,
-    _data_size: uint32 = 64,
-) -> uint256:
-    """
-    @notice Quote fee for read request
-    """
-
-    message: Bytes[lz.LZ_MESSAGE_SIZE_CAP] = lz._prepare_read_message_bytes(
-        _dst_eid, _target, _calldata
-    )
-
-    return lz._quote_lz_fee(
-        lz.LZ_READ_CHANNEL, empty(address), message, _gas_limit, _value, _data_size
-    )
-
-@payable
-@external
-def lzReceive(
-    _origin: lz.Origin,
-    _guid: bytes32,
-    _message: Bytes[lz.LZ_MESSAGE_SIZE_CAP],
-    _executor: address,
-    _extraData: Bytes[64],
-) -> bool:
-    """
-    @notice Handle both regular messages and read responses
-    """
-
-    # Verify message source
-    assert lz._lz_receive(_origin, _guid, _message, _executor, _extraData)
-
-    receiver: address = empty(address)
-    amount: uint256 = 0
-    receiver, amount = abi_decode(_message, (address, uint256))
-
-    assert amount > 0, "Amount must be greater than 0"
-    assert self.balance >= amount, "Too much gas spent"
-    send(receiver, amount)
-
-    log MessageReceived(_origin.srcEid, receiver, amount)
-
-    return True
-
+################################################################
+#                     EXTERNAL FUNCTIONS                       #
+################################################################
 
 @external
 @payable
@@ -301,3 +174,95 @@ def __default__():
     @dev This is needed to receive refunds from LayerZero
     """
     pass
+
+@external
+@view
+def quote_fees(
+    _target_eid: uint32,
+    _lz_receive_gas_limit: uint128,
+) -> uint256:
+    """
+    @notice Quote fees for specified targets
+    @param _target_eid Chain ID
+    @param _lz_receive_gas_limit Gas limit for lzReceive
+    @return Fee for target chain (0 if target not configured)
+    """
+    # Prepare dummy broadcast message (uint256 number, bytes32 hash)
+    message: Bytes[OApp.MAX_MESSAGE_SIZE] = abi_encode(empty(address))
+
+    # Prepare array of fees per chain
+    fees: uint256 = 0
+
+    # Prepare options (same for all targets)
+    # non-zero value in wei
+    options: Bytes[OptionsBuilder.MAX_OPTIONS_TOTAL_SIZE] = OptionsBuilder.newOptions()
+    options = OptionsBuilder.addExecutorLzReceiveOption(options, _lz_receive_gas_limit, 10 ** 10)
+
+    target: bytes32 = OApp.peers[_target_eid]  # Use peers directly
+    if target == empty(bytes32):
+        return fees
+
+    # Get fee for target EID and append to array
+    fees = OApp._quote(_target_eid, message, options, False).nativeFee
+    return fees
+
+@external
+@payable
+def send_gas(
+    _target: address,
+    _value: uint128,
+    _target_eid: uint32,
+    _target_fees: uint256,
+    _lz_receive_gas_limit: uint128,
+):
+    """
+    @notice Send gas funds to target chain
+    @param _target Target address to receive funds
+    @param _value Amount
+    @param _target_eid Chain ID to broadcast to
+    @param _target_fees Fees per chain
+    @param _lz_receive_gas_limit Gas limit for lzReceive
+    """
+
+    # Prepare broadcast target
+    broadcast_target: BroadcastTarget = BroadcastTarget(eid=_target_eid, fee=_target_fees, gas_limit=_lz_receive_gas_limit)
+
+    self._send_gas(
+        _target,
+        _value,
+        broadcast_target,
+        msg.sender,
+    )
+
+@payable
+@external
+def lzReceive(
+    _origin: OApp.Origin,
+    _guid: bytes32,
+    _message: Bytes[OApp.MAX_MESSAGE_SIZE],
+    _executor: address,
+    _extraData: Bytes[OApp.MAX_EXTRA_DATA_SIZE],
+):
+    """
+    @notice Handle messages: read responses, and regular messages
+    @dev Two types of messages:
+         1. Read responses (from read channel)
+         2. Regular messages (block hash broadcasts from other chains)
+    @param _origin Origin information containing srcEid, sender, and nonce
+    @param _guid Global unique identifier for the message
+    @param _message The encoded message payload containing block number and hash
+    @param _executor Address of the executor for the message
+    @param _extraData Additional data passed by the executor
+    """
+    # Verify message source
+    OApp._lzReceive(_origin, _guid, _message, _executor, _extraData)
+
+    target: address = abi_decode(_message, address)
+    # Send everything that received
+    send(target, msg.value)
+
+    log MessageReceived(
+        source=_origin.srcEid,
+        receiver=target,
+        amount=convert(msg.value, uint128),
+    )
